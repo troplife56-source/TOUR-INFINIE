@@ -220,18 +220,24 @@
   .gift .btn { font-size: 20px; padding: 10px 14px; }
   @keyframes blink { to { opacity: .35; } }
 
+  /* Accord pour la mesure d'audience */
+  .consent {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 8;
+    background: var(--panel); border-top: 2px solid rgba(255,255,255,.14);
+    padding-block: 14px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    display: grid; gap: 10px; justify-items: center;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  .consent p { margin: 0; max-width: 46ch; text-align: center; font-weight: 600; font-size: 14px; line-height: 1.45; color: var(--ink-soft); }
+  .consent .row { width: min(360px, 100%); }
+  .consent .btn { font-size: 18px; padding: 10px 12px; }
+  .linkbtn { background: none; border: 0; padding: 4px; color: var(--ink-soft); text-decoration: underline; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; justify-self: center; }
+
   @keyframes pop { from { transform: scale(.85); opacity: 0; } to { transform: none; opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { .card, .banner, .days i.now { animation: none; } }
 </style>
- <!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-8NS70KY2G5"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-
-  gtag('config', 'G-8NS70KY2G5');
-</script>
 </head>
 <body>
 <div id="game" class="menu-open">
@@ -259,6 +265,7 @@
       <div class="level" id="levelMenu"></div>
       <div class="missions" id="missionsMenu"></div>
       <p class="hint">Sur ordinateur : clic ou barre espace</p>
+      <button class="linkbtn" id="cookies" hidden>Gérer les cookies</button>
     </div>
   </div>
 
@@ -287,6 +294,14 @@
       <div class="themes" id="themes"></div>
       <p class="shop-msg" id="shopMsg"></p>
       <button class="btn alt" id="shopBack">Retour</button>
+    </div>
+  </div>
+
+  <div class="consent" id="consent" role="dialog" aria-label="Cookies" hidden>
+    <p>Ce jeu utilise Google Analytics pour compter les parties et savoir quoi améliorer. Aucune pub, aucune revente. Tu acceptes ?</p>
+    <div class="row">
+      <button class="btn alt" id="cNo">Refuser</button>
+      <button class="btn" id="cYes">Accepter</button>
     </div>
   </div>
 </div>
@@ -322,6 +337,38 @@
   let wallet = store.get('tour-coins', 0);
   let owned = store.get('tour-owned', ['classique']);
   let equipped = store.get('tour-theme', 'classique');
+
+  // ---------- Mesure d'audience : Google Analytics, seulement sur le site public et après accord
+  const GA_ID = 'G-8NS70KY2G5';
+  const gaSite = /github\.io$/.test(location.hostname);
+  let consent = store.get('tour-consent', null);   // 'yes', 'no' ou null (pas encore demandé)
+  let gaLoaded = false;
+  window.dataLayer = window.dataLayer || [];
+  function gtag() { window.dataLayer.push(arguments); }
+  function loadGA() {
+    if (gaLoaded) { gtag('consent', 'update', { analytics_storage: 'granted' }); return; }
+    gaLoaded = true;
+    gtag('consent', 'default', { analytics_storage: 'granted', ad_storage: 'denied', ad_user_data: 'denied', ad_personalization: 'denied' });
+    const s = document.createElement('script');
+    s.async = true; s.src = 'https://www.googletagmanager.com/gtag/js?id=' + GA_ID;
+    document.head.append(s);
+    gtag('js', new Date());
+    gtag('config', GA_ID);
+  }
+  function track(name, params = {}) { if (gaSite && consent === 'yes') gtag('event', name, params); }
+  function setConsent(v) {
+    consent = v; store.set('tour-consent', v); $('consent').hidden = true;
+    if (v === 'yes') loadGA();
+    else if (gaLoaded) gtag('consent', 'update', { analytics_storage: 'denied' });
+  }
+  if (gaSite) {
+    $('cookies').hidden = false;
+    if (consent === 'yes') loadGA();
+    else if (consent === null) $('consent').hidden = false;
+  }
+  $('cYes').addEventListener('click', () => setConsent('yes'));
+  $('cNo').addEventListener('click', () => setConsent('no'));
+  $('cookies').addEventListener('click', () => { $('consent').hidden = false; });
 
   // ---------- Pièces
   let runCoins = 0;
@@ -483,6 +530,7 @@
       wallet -= t.price; store.set('tour-coins', wallet); refreshWallet();
       owned.push(t.id); store.set('tour-owned', owned);
       jingle();
+      track('theme_purchase', { theme: t.id, price: t.price });
       $('shopMsg').textContent = `Thème ${t.name} débloqué et équipé.`;
     } else {
       tone(660, .1, 'sine');
@@ -586,6 +634,7 @@
         mDone[type] = (mDone[type] || 0) + 1;
         addCoins(m.reward);
         showBanner('Mission accomplie', MTYPES[type].label(m.target), m.reward);
+        track('mission_complete', { mission: type, target: m.target });
         missions[k] = newMission(missions.map(x => x.type));
       }
     });
@@ -616,6 +665,7 @@
       addCoins(r);
       showBanner('Niveau supérieur', `Bâtisseur niveau ${level}`, r);
       jingle();
+      track('level_up', { level });
     }
     store.set('tour-xp', xp); store.set('tour-level', level);
   }
@@ -658,6 +708,7 @@
     addCoins(GIFTS[pos - 1]);
     jingle();
     showBanner('Cadeau du jour', `Jour ${pos} ouvert`, GIFTS[pos - 1]);
+    track('daily_gift', { day: pos, streak: day });
     renderGift();
   }
   $('giftBox').addEventListener('click', e => { if (e.target.closest('#giftBtn')) claimGift(); });
@@ -837,7 +888,7 @@
       showBanner('Record battu', `${score} étages`);
     }
     const m = MILESTONES.find(m => m.at === score);
-    if (m) { addCoins(m.bonus); showBanner('Palier atteint', m.name, m.bonus); jingle(); }
+    if (m) { addCoins(m.bonus); showBanner('Palier atteint', m.name, m.bonus); jingle(); track('milestone', { name: m.name, floors: m.at }); }
     spawn();
   }
 
@@ -855,6 +906,7 @@
       : gap === 0 ? 'Égalité avec ton record ! Un étage de plus et il tombe.'
       : `Si près ! Plus que ${gap + 1} étages pour battre ton record.`;
     $('newRec').hidden = !(isRec || close);
+    track('game_over', { score, coins_earned: runCoins, new_record: isRec, theme: theme.id, level });
     if (!calm) slowmo = .3;
     setTimeout(() => {
       state = 'over'; slowmo = 1;
@@ -871,6 +923,7 @@
     state = 'play';
     tone(440, .1, 'sine');
     mission('games', 1);
+    track('game_start', { theme: theme.id, level, best });
   }
 
   // ---------- Contrôles
